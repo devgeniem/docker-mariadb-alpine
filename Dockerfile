@@ -1,24 +1,29 @@
 FROM alpine:latest
 
-ENV LC_ALL=en_GB.UTF-8
+ENV LC_ALL=en_GB.UTF-8 \
+    TZ='Europe/Helsinki' \
+    DATA_DIR='/data'
 
-RUN apk -U upgrade
-RUN apk add mariadb mariadb-client
+RUN    apk -U upgrade \
+    # Install mariadb and mariadb-client
+    && apk add mariadb mariadb-client \
+    && mkdir /docker-entrypoint-initdb.d \
+    && rm -rf /var/lib/mysql \
+    # Add default timezone
+    && apk add tzdata \
+    && cp /usr/share/zoneinfo/${TZ} /etc/localtime \
+    && echo "${TZ}" > /etc/timezone \
+    # cleanup
+    && rm -rf /tmp/src \
+    && rm -rf /var/cache/apk/* \
 
-RUN mkdir /docker-entrypoint-initdb.d
-
-# comment out a few problematic configuration values
-# don't reverse lookup hostnames, they are usually another container
-RUN sed -Ei 's/^(bind-address|log)/#&/' /etc/mysql/my.cnf \
-  && echo -e 'skip-host-cache\nskip-name-resolve' | awk '{ print } $1 == "[mysqld]" && c == 0 { c = 1; system("cat") }' /etc/mysql/my.cnf > /tmp/my.cnf \
-  && mv /tmp/my.cnf /etc/mysql/my.cnf
-
-RUN rm -rf /tmp/src
-RUN rm -rf /var/cache/apk/*
-
-VOLUME /var/lib/mysql
+    # Provide symlink for mysql for error logging
+    && ln -sf /dev/stderr /var/log/mysql.err
 
 COPY docker-entrypoint.sh /
 ENTRYPOINT ["/docker-entrypoint.sh"]
 
+COPY my.cnf /etc/mysql/my.cnf
+
+VOLUME ${DATA_DIR}
 EXPOSE 3306

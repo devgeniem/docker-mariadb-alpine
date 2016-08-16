@@ -3,3 +3,4 @@
 .editorconfig
 LICENSE
 *.md
+docker-compose.yml

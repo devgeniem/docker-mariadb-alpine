@@ -1,5 +1,5 @@
 #!/bin/sh
-set -xo pipefail
+set -o pipefail
 
 DATA_DIR="$(mysqld --verbose --help --log-bin-index=`mktemp -u` 2>/dev/null | awk '$1 == "datadir" { print $2; exit }')"
 PID_FILE=/run/mysqld/mysqld.pid
@@ -35,7 +35,6 @@ if [ ! -d "$DATA_DIR/mysql" ]; then
   fi
 
   if [ -z "$MYSQL_INITDB_SKIP_TZINFO" ]; then
-    apk add --update-cache tzdata
     # sed is for https://bugs.mysql.com/bug.php?id=20545
     mysql_tzinfo_to_sql /usr/share/zoneinfo | sed 's/Local time zone must be set--see zic manual page/FCTY/' | mysql $mysql_options mysql
   fi
@@ -53,7 +52,10 @@ if [ ! -d "$DATA_DIR/mysql" ]; then
     DELETE FROM mysql.user ;
     CREATE USER 'root'@'%' IDENTIFIED BY '${MYSQL_ROOT_PASSWORD}' ;
     GRANT ALL ON *.* TO 'root'@'%' WITH GRANT OPTION ;
+    -- Drop default empty database
     DROP DATABASE IF EXISTS test ;
+    --  We use skip-name-resolve and want to avoid unnecessary Warnings from unneeded features
+    DELETE FROM mysql.proxies_priv WHERE host != 'localhost';
     FLUSH PRIVILEGES ;
 EOSQL
 
@@ -73,19 +75,12 @@ EOSQL
       mysql $mysql_options -e "GRANT ALL ON \`$MYSQL_DATABASE\`.* TO '$MYSQL_USER'@'%' ;"
     fi
 
-    mysql $mysql_options 'FLUSH PRIVILEGES ;'
+    mysql $mysql_options <<-EOSQL
+    --  We use skip-name-resolve and want to avoid unnecessary Warnings from unneeded features
+    DELETE FROM mysql.proxies_priv WHERE host != 'localhost';
+    FLUSH PRIVILEGES ;
+EOSQL
   fi
-
-  echo
-  for f in /docker-entrypoint-initdb.d/*; do
-    case "$f" in
-      *.sh)     echo "$0: running $f"; . "$f" ;;
-      *.sql)    echo "$0: running $f"; mysql $mysql_options < "$f"; echo ;;
-      *.sql.gz) echo "$0: running $f"; gunzip -c "$f" | mysql $mysql_options; echo ;;
-      *)        echo "$0: ignoring $f" ;;
-    esac
-    echo
-  done
 
   pid="`cat $PID_FILE`"
   if ! kill -s TERM "$pid"; then
@@ -95,6 +90,21 @@ EOSQL
 
   # make sure mysql completely ended
   sleep 2
+
+  # Create default configs for root user for easier debugging
+  cat > /root/.my.cnf <<-MYSQLCONF
+[client]
+user=root
+password="${MYSQL_ROOT_PASSWORD}"
+
+[mysqldump]
+user=root
+password="${MYSQL_ROOT_PASSWORD}"
+
+[mysqldiff]
+user=root
+password="${MYSQL_ROOT_PASSWORD}"
+MYSQLCONF
 
   echo
   echo 'MySQL init process done. Ready for start up.'
